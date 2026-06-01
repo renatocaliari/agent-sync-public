@@ -1,0 +1,48 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: cupcake --default, dark --prefersdark;
+  logs: false;
+}
+
+@view-transition {
+    navigation: auto;
+}
+
+@theme {
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --radius-field: 0.5rem;
+    --radius-box: 0.75rem;
+}
+
+/* Smooth transitions for delightful interactions */
+.btn, .input, .select, .card, .menu li > * {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Subtle hover lift effect */
+.btn:hover {
+    transform: translateY(-1px);
+}
+
+.btn:active {
+    transform: translateY(0);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: oklch(var(--b2));
+}
+
+::-webkit-scrollbar-thumb {
+    background: oklch(var(--bc) / 0.3);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: oklch(var(--bc) / 0.5);
+}

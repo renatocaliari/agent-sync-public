@@ -1,0 +1,13 @@
+.join .btn-active {
+    background-color: oklch(var(--p));
+    color: oklch(var(--pc));
+    border-color: oklch(var(--p));
+}
+.join .btn-active:hover {
+    background-color: oklch(var(--p) / 0.9);
+}
+#canvas-container { min-height: 0; min-width: 0; }
+#fabric-canvas { display: block; width: 100%; height: 100%; }
+#cursors-layer { position: absolute; inset: 0; pointer-events: none; }
+.btn-square svg { display: block; margin: 0 auto; }
+.btn-square { display: inline-flex; align-items: center; justify-content: center; }

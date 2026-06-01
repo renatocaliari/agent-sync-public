@@ -1,0 +1,55 @@
+package pages
+
+import (
+	"fmt"
+	"net/http"
+	"sync/atomic"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+func SetupCounter(router chi.Router) {
+	var globalCount atomic.Int32
+
+	router.Get("/counter", func(w http.ResponseWriter, r *http.Request) {
+		CounterPage(globalCount.Load()).Render(r.Context(), w)
+	})
+
+	router.Get("/counter/data", func(w http.ResponseWriter, r *http.Request) {
+		sse := datastar.NewSSE(w, r)
+		sse.PatchElementTempl(CounterDisplay(globalCount.Load()))
+	})
+
+	router.Post("/counter/increment", func(w http.ResponseWriter, r *http.Request) {
+		newCount := globalCount.Add(1)
+		sse := datastar.NewSSE(w, r)
+		sse.MarshalAndPatchSignals(map[string]int{"count": int(newCount)})
+	})
+}
+
+templ CounterPage(count int32) {
+	@Base("Counter") {
+		<div class="container mx-auto p-8">
+			<h1 class="text-2xl font-bold mb-4">Real-time Counter</h1>
+			<p class="mb-4 text-gray-600">
+				Global counter shared across all users. Uses SSE to update.
+			</p>
+			<div id="counter-container" data-signals={ fmt.Sprintf(`{"count":%d}`, count) }>
+				@counterDisplay(count)
+				<button
+					class="btn btn-primary btn-lg"
+					data-on:click="@post('/counter/increment')"
+				>
+					Increment
+				</button>
+			</div>
+		</div>
+	}
+}
+
+templ CounterDisplay(count int32) {
+	<div id="counter-display" class="text-4xl font-bold mb-4">
+		Count: { fmt.Sprint(count) }
+	</div>
+}

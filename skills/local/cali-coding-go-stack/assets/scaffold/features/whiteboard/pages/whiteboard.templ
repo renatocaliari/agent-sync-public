@@ -1,0 +1,76 @@
+package pages
+
+import (
+	"northstar/features/common/layouts"
+)
+
+templ FabricWhiteboardPage() {
+	@layouts.Base("Whiteboard") {
+		<div class="px-4 py-3 border-b bg-base-100">
+			<div class="breadcrumbs text-sm m-0 p-0">
+				<ul>
+					<li><a href="/">Home</a></li>
+					<li class="font-medium">Whiteboard</li>
+				</ul>
+			</div>
+		</div>
+		<div data-init="$tabId = sessionStorage.getItem('wb') || (sessionStorage.setItem('wb', Math.random().toString(36).substr(2,6)) || sessionStorage.getItem('wb'))">
+			<div data-init="@get('/whiteboard/stream?tabId=' + $tabId)">
+				<div data-init="@get('/whiteboard/cursors?tabId=' + $tabId)">
+					<div class="flex flex-col h-full gap-4 p-4" data-signals="{tool: 'select', color: '#000000', brushSize: 2, tabId: ''}">
+						<div class="card bg-base-200 shadow-lg">
+							<div class="card-body p-3">
+								<div class="flex flex-wrap items-center gap-3">
+									<div class="join">
+										<button type="button" class="btn btn-square btn-sm btn-ghost join-item tooltip tooltip-bottom" data-tip="Select (V)" data-on:click="$tool='select'">
+											<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg>
+										</button>
+										<button type="button" class="btn btn-square btn-sm btn-ghost join-item tooltip tooltip-bottom" data-tip="Pencil (P)" data-on:click="$tool='pencil'">
+											<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><circle cx="11" cy="11" r="2"/></svg>
+										</button>
+									</div>
+									<div class="divider divider-horizontal my-0"></div>
+									<div class="join">
+										<button type="button" class="btn btn-square btn-sm btn-ghost join-item tooltip tooltip-bottom" data-tip="Rectangle (R)" data-on:click="$tool='rect'">
+											<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+										</button>
+										<button type="button" class="btn btn-square btn-sm btn-ghost join-item tooltip tooltip-bottom" data-tip="Circle (C)" data-on:click="$tool='circle'">
+											<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+										</button>
+									</div>
+									<div class="divider divider-horizontal my-0"></div>
+									<div class="join">
+										<button type="button" class="btn btn-square btn-sm join-item tooltip tooltip-bottom" data-tip="Black" data-on:click="$color='#000000'" style="color:#000"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg></button>
+										<button type="button" class="btn btn-square btn-sm join-item tooltip tooltip-bottom" data-tip="Red" data-on:click="$color='#ef4444'" style="color:#ef4444"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg></button>
+										<button type="button" class="btn btn-square btn-sm join-item tooltip tooltip-bottom" data-tip="Blue" data-on:click="$color='#3b82f6'" style="color:#3b82f6"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg></button>
+									</div>
+									<div class="divider divider-horizontal my-0"></div>
+									<div class="join">
+										<button type="button" class="btn btn-square btn-sm btn-ghost join-item tooltip tooltip-bottom" data-tip="Upload (U)" id="upload-btn">
+											<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+										</button>
+										<button type="button" class="btn btn-square btn-sm btn-error join-item tooltip tooltip-bottom" data-tip="Clear All" id="clear-btn">
+											<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+										</button>
+									</div>
+									<input type="file" id="file-input" accept="image/*" class="hidden"/>
+								</div>
+							</div>
+						</div>
+						<div class="relative flex-1 rounded-xl overflow-hidden bg-base-100 shadow-inner border border-base-300" style="min-height:400px">
+							<canvas id="fabric-canvas" class="w-full h-full"></canvas>
+							<div id="cursors-layer" class="absolute inset-0 pointer-events-none"></div>
+						</div>
+						<div class="flex justify-between items-center px-3 py-2 bg-base-200 rounded-lg">
+							<span id="status-text" class="text-xs font-medium">Ready</span>
+							<span class="text-xs text-base-content/60">Ctrl+V to paste</span>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<link rel="stylesheet" href="/whiteboard/static/whiteboard.css"/>
+		<script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
+		<script src="/whiteboard/static/whiteboard.js"></script>
+	}
+}

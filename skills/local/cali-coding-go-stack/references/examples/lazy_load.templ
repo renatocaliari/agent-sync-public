@@ -1,0 +1,50 @@
+package pages
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+func SetupLazyLoad(router chi.Router) {
+	router.Get("/lazy-load", func(w http.ResponseWriter, r *http.Request) {
+		LazyLoadPage().Render(r.Context(), w)
+	})
+
+	router.Get("/lazy-load/content", func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(1 * time.Second)
+		sse := datastar.NewSSE(w, r)
+		sse.PatchElementTempl(LazyLoadContent())
+	})
+}
+
+templ LazyLoadPage() {
+	@Base("Lazy Load") {
+		<div class="container mx-auto p-8">
+			<h1 class="text-2xl font-bold mb-4">Lazy Load</h1>
+			<p class="mb-4 text-gray-600">
+				Content loads on demand using <code>data-init</code>.
+			</p>
+			<div 
+				id="lazy-content" 
+				class="border rounded p-4"
+				data-init="@get('/lazy-load/content')"
+			>
+				<span class="loading loading-spinner loading-md"></span>
+				Loading...
+			</div>
+		</div>
+	}
+}
+
+templ LazyLoadContent() {
+	<div id="lazy-content" class="border rounded p-4 bg-base-200">
+		<h3 class="font-bold text-lg">Lazy Loaded Content</h3>
+		<p>This content was loaded 1 second after the page rendered.</p>
+		<p class="text-sm text-gray-500">
+			Useful for loading expensive content without blocking page render.
+		</p>
+	</div>
+}
