@@ -1,0 +1,18 @@
+# .air.toml
+
+[build]
+  pre_cmd        = ["go tool templ generate"]
+  cmd            = "go build -tags=dev -o ./tmp/app ./cmd/web"
+  bin            = "./tmp/app"
+  include_ext    = ["go", "templ", "yaml", "css", "js"]
+  exclude_dir    = ["tmp", "vendor", "node_modules", "testdata"]
+  exclude_regex  = ["_templ\\.go$"]
+  kill_delay     = "500ms"
+  send_interrupt = true
+  stop_on_error  = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

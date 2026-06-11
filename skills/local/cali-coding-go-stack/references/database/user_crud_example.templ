@@ -1,0 +1,292 @@
+package pages
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/goccy/go-json"
+	"github.com/starfederation/datastar-go/datastar"
+	"yourproject/db"
+	"zombiezen.com/go/sqlite"
+)
+
+type User struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+type UserService struct {
+	db *db.Database
+}
+
+func NewUserService(db *db.Database) *UserService {
+	return &UserService{db: db}
+}
+
+func (s *UserService) Create(ctx context.Context, user *User) error {
+	return s.db.WriteTX(ctx, func(tx *sqlite.Conn) error {
+		stmt := tx.Prep(`
+			INSERT INTO users (id, name, email, created_at)
+			VALUES ($id, $name, $email, $created_at)
+		`)
+		defer stmt.Reset()
+
+		stmt.SetText("$id", user.ID)
+		stmt.SetText("$name", user.Name)
+		stmt.SetText("$email", user.Email)
+		stmt.SetInt64("$created_at", user.CreatedAt)
+
+		_, err := stmt.Step()
+		return err
+	})
+}
+
+func (s *UserService) Get(ctx context.Context, id string) (*User, error) {
+	var user *User
+	err := s.db.ReadTX(ctx, func(tx *sqlite.Conn) error {
+		stmt := tx.Prep(`SELECT id, name, email, created_at FROM users WHERE id = $id`)
+		defer stmt.Reset()
+
+		stmt.SetText("$id", id)
+
+		hasRow, err := stmt.Step()
+		if err != nil {
+			return err
+		}
+		if !hasRow {
+			return nil
+		}
+
+		user = &User{
+			ID:        stmt.GetText("id"),
+			Name:      stmt.GetText("name"),
+			Email:     stmt.GetText("email"),
+			CreatedAt: stmt.GetInt64("created_at"),
+		}
+		return nil
+	})
+	return user, err
+}
+
+func (s *UserService) List(ctx context.Context) ([]*User, error) {
+	users := []*User{}
+	err := s.db.ReadTX(ctx, func(tx *sqlite.Conn) error {
+		stmt := tx.Prep(`SELECT id, name, email, created_at FROM users ORDER BY created_at DESC`)
+		defer stmt.Reset()
+
+		for {
+			hasRow, err := stmt.Step()
+			if err != nil {
+				return err
+			}
+			if !hasRow {
+				break
+			}
+
+			users = append(users, &User{
+				ID:        stmt.GetText("id"),
+				Name:      stmt.GetText("name"),
+				Email:     stmt.GetText("email"),
+				CreatedAt: stmt.GetInt64("created_at"),
+			})
+		}
+		return nil
+	})
+	return users, err
+}
+
+func (s *UserService) Update(ctx context.Context, user *User) error {
+	return s.db.WriteTX(ctx, func(tx *sqlite.Conn) error {
+		stmt := tx.Prep(`
+			UPDATE users SET name = $name, email = $email
+			WHERE id = $id
+		`)
+		defer stmt.Reset()
+
+		stmt.SetText("$id", user.ID)
+		stmt.SetText("$name", user.Name)
+		stmt.SetText("$email", user.Email)
+
+		_, err := stmt.Step()
+		return err
+	})
+}
+
+func (s *UserService) Delete(ctx context.Context, id string) error {
+	return s.db.WriteTX(ctx, func(tx *sqlite.Conn) error {
+		stmt := tx.Prep(`DELETE FROM users WHERE id = $id`)
+		defer stmt.Reset()
+
+		stmt.SetText("$id", id)
+
+		_, err := stmt.Step()
+		return err
+	})
+}
+
+func SetupUserRoutes(router chi.Router, database *db.Database) {
+	service := NewUserService(database)
+
+	router.Get("/users", func(w http.ResponseWriter, r *http.Request) {
+		users, _ := service.List(r.Context())
+		UserListPage(users).Render(r.Context(), w)
+	})
+
+	router.Get("/users/data", func(w http.ResponseWriter, r *http.Request) {
+		users, _ := service.List(r.Context())
+		datastar.NewSSE(w, r).PatchElementTempl(UserList(users))
+	})
+
+	router.Post("/users", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+		if err := datastar.ReadSignals(r, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		user := &User{
+			ID:        generateID(),
+			Name:      req.Name,
+			Email:     req.Email,
+			CreatedAt: time.Now().Unix(),
+		}
+
+		if err := service.Create(r.Context(), user); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		users, _ := service.List(r.Context())
+		datastar.NewSSE(w, r).PatchElementTempl(UserList(users))
+	})
+
+	router.Put("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+
+		var req struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+		if err := datastar.ReadSignals(r, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		user, _ := service.Get(r.Context(), id)
+		if user == nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
+		user.Name = req.Name
+		user.Email = req.Email
+
+		if err := service.Update(r.Context(), user); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		users, _ := service.List(r.Context())
+		datastar.NewSSE(w, r).PatchElementTempl(UserList(users))
+	})
+
+	router.Delete("/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+
+		if err := service.Delete(r.Context(), id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		users, _ := service.List(r.Context())
+		datastar.NewSSE(w, r).PatchElementTempl(UserList(users))
+	})
+}
+
+func generateID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+templ UserListPage(users []*User) {
+	@Base("Users") {
+		<div class="container mx-auto p-8">
+			<h1 class="text-2xl font-bold mb-4">Users CRUD</h1>
+			<p class="mb-4 text-gray-600">
+				Complete CRUD example with SQLite persistence.
+			</p>
+			
+			<div class="mb-6 p-4 border rounded">
+				<h2 class="font-bold mb-2">Add User</h2>
+				<div class="flex gap-2">
+					<input 
+						type="text" 
+						class="input input-bordered" 
+						placeholder="Name"
+						data-bind:name
+					/>
+					<input 
+						type="email" 
+						class="input input-bordered" 
+						placeholder="Email"
+						data-bind:email
+					/>
+					<button 
+						class="btn btn-primary"
+						data-on:click="@post('/users')"
+					>
+						Add
+					</button>
+				</div>
+			</div>
+
+			<div id="user-list">
+				@UserList(users)
+			</div>
+		</div>
+	}
+}
+
+templ UserList(users []*User) {
+	<table class="table w-full" id="user-list">
+		<thead>
+			<tr>
+				<th>Name</th>
+				<th>Email</th>
+				<th>Created</th>
+				<th>Actions</th>
+			</tr>
+		</thead>
+		<tbody>
+			if len(users) == 0 {
+				<tr><td colspan="4" class="text-center text-gray-500">No users yet</td></tr>
+			}
+			for _, u := range users {
+				@UserRow(u)
+			}
+		</tbody>
+	</table>
+}
+
+templ UserRow(user *User) {
+	<tr id={ "user-" + user.ID }>
+		<td>{ user.Name }</td>
+		<td>{ user.Email }</td>
+		<td>{ time.Unix(user.CreatedAt, 0).Format("2006-01-02 15:04") }</td>
+		<td>
+			<button 
+				class="btn btn-ghost btn-sm"
+				data-on:click={ `@delete('/users/` + user.ID + `')` }
+			>
+				Delete
+			</button>
+		</td>
+	</tr>
+}

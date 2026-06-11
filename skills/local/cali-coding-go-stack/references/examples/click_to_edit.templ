@@ -1,0 +1,120 @@
+package pages
+
+import (
+	"github.com/go-chi/chi/v5"
+	"github.com/starfederation/datastar-go/datastar"
+	"net/http"
+)
+
+type ClickToEditContact struct {
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Email     string `json:"email"`
+}
+
+func SetupClickToEdit(router chi.Router) {
+	contact := &ClickToEditContact{
+		FirstName: "John",
+		LastName:  "Doe",
+		Email:     "joe@blow.com",
+	}
+
+	router.Get("/click-to-edit", func(w http.ResponseWriter, r *http.Request) {
+		ClickToEditPage(contact).Render(r.Context(), w)
+	})
+
+	router.Get("/click-to-edit/edit", func(w http.ResponseWriter, r *http.Request) {
+		sse := datastar.NewSSE(w, r)
+		sse.MarshalAndPatchSignals(contact)
+		sse.PatchElementTempl(ClickToEditForm())
+	})
+
+	router.Put("/click-to-edit", func(w http.ResponseWriter, r *http.Request) {
+		updated := &ClickToEditContact{}
+		if err := datastar.ReadSignals(r, updated); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		contact = updated
+		sse := datastar.NewSSE(w, r)
+		sse.MarshalAndPatchSignals(contact)
+		sse.PatchElementTempl(ClickToEditDisplay(contact))
+	})
+
+	router.Get("/click-to-edit/cancel", func(w http.ResponseWriter, r *http.Request) {
+		sse := datastar.NewSSE(w, r)
+		sse.MarshalAndPatchSignals(contact)
+		sse.PatchElementTempl(ClickToEditDisplay(contact))
+	})
+
+	router.Patch("/click-to-edit/reset", func(w http.ResponseWriter, r *http.Request) {
+		contact.FirstName = "John"
+		contact.LastName = "Doe"
+		contact.Email = "joe@blow.com"
+		sse := datastar.NewSSE(w, r)
+		sse.MarshalAndPatchSignals(contact)
+		sse.PatchElementTempl(ClickToEditDisplay(contact))
+	})
+}
+
+templ ClickToEditPage(contact *ClickToEditContact) {
+	@Base("Click to Edit") {
+		<div class="container mx-auto p-8">
+			<h1 class="text-2xl font-bold mb-4">Click to Edit</h1>
+			@clickToEditDisplay(contact)
+		</div>
+	}
+}
+
+templ clickToEditDisplay(contact *ClickToEditContact) {
+	<div id="demo" class="space-y-4">
+		<p>First Name: { contact.FirstName }</p>
+		<p>Last Name: { contact.LastName }</p>
+		<p>Email: { contact.Email }</p>
+		<div class="flex gap-2">
+			<button
+				class="btn btn-primary"
+				data-on:click="@get('/click-to-edit/edit')"
+			>
+				Edit
+			</button>
+			<button
+				class="btn btn-secondary"
+				data-on:click="@patch('/click-to-edit/reset')"
+			>
+				Reset
+			</button>
+		</div>
+	</div>
+}
+
+templ ClickToEditForm() {
+	<div id="demo" class="space-y-4">
+		<label class="block">
+			<span>First Name</span>
+			<input type="text" class="input input-bordered w-full" data-bind:first-name/>
+		</label>
+		<label class="block">
+			<span>Last Name</span>
+			<input type="text" class="input input-bordered w-full" data-bind:last-name/>
+		</label>
+		<label class="block">
+			<span>Email</span>
+			<input type="email" class="input input-bordered w-full" data-bind:email/>
+		</label>
+		<div class="flex gap-2">
+			<button
+				class="btn btn-success"
+				data-on:click="@put('/click-to-edit')"
+			>
+				Save
+			</button>
+			<button
+				class="btn btn-error"
+				data-on:click="@get('/click-to-edit/cancel')"
+			>
+				Cancel
+			</button>
+		</div>
+	</div>
+}

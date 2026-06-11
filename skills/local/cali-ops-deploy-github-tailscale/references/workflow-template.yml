@@ -1,0 +1,100 @@
+# GitHub Actions Workflow Template — Deploy via Tailscale OIDC
+
+```yaml
+name: Build and Deploy
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  packages: write
+  contents: read
+  id-token: write  # Required for Tailscale OIDC
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # ── Deploy (only on master push) ──────────────────────────
+
+      - name: Authenticate with Tailscale
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:continuous-integration
+
+      - name: Deploy to server
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          SSH_HOST: 100.120.175.47
+          SSH_PORT: 2222
+          SSH_USER: deploy
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          CONTAINER_NAME: treinamento-praticas-narrativas
+        run: |
+          echo "$SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+          mkdir -p ~/.ssh
+          ssh-keyscan -t ed25519 -p $SSH_PORT $SSH_HOST >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i /tmp/deploy_key -p $SSH_PORT -o ConnectTimeout=30 \
+            "${SSH_USER}@${SSH_HOST}" \
+            "docker image prune -f"
+
+          echo "✅ Deploy complete"
+```
+
+## Required GitHub Secrets
+
+| Secret | Description | How to get |
+|---|---|---|
+| `TS_OAUTH_CLIENT_ID` | Tailscale OIDC Client ID | Tailscale Admin → Settings → OAuth |
+| `TS_AUDIENCE` | Tailscale OIDC Audience | Same page as Client ID |
+| `DEPLOY_SSH_KEY` | Private ed25519 key for deploy user | Generate with `ssh-keygen -t ed25519` |
+
+## How it works
+
+1. Runner authenticates with Tailscale via OIDC (ephemeral JWT)
+2. Runner joins the tailnet temporarily
+3. SSH connects to server on port 2222 (Tailscale IP only)
+4. `command=` in authorized_keys restricts to docker compose commands only
+5. Runner node disappears from tailnet after workflow completes

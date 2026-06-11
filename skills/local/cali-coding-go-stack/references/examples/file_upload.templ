@@ -1,0 +1,124 @@
+package pages
+
+import (
+	"encoding/base64"
+	"fmt"
+	"io"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/goccy/go-json"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+func SetupFileUpload(router chi.Router) {
+	router.Get("/file-upload", func(w http.ResponseWriter, r *http.Request) {
+		FileUploadPage().Render(r.Context(), w)
+	})
+
+	router.Post("/file-upload", func(w http.ResponseWriter, r *http.Request) {
+		maxSize := 4 * 1024 * 1024
+		r.Body = http.MaxBytesReader(w, r.Body, int64(maxSize))
+		data, err := io.ReadAll(r.Body)
+
+		sse := datastar.NewSSE(w, r)
+		if err != nil {
+			if len(data) >= maxSize {
+				http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			sse.ConsoleError(fmt.Errorf("error reading body: %w", err))
+			return
+		}
+
+		type FileSignals struct {
+			Files []struct {
+				Name     string `json:"name"`
+				Contents string `json:"contents"`
+				Mime     string `json:"mime"`
+			} `json:"files"`
+		}
+
+		signals := &FileSignals{}
+		if err := json.Unmarshal(data, signals); err != nil {
+			sse.ConsoleError(fmt.Errorf("error unmarshalling: %w", err))
+			return
+		}
+
+		results := []struct {
+			Name string
+			Size int
+			Mime string
+		}{}
+
+		for _, f := range signals.Files {
+			content, err := base64.StdEncoding.DecodeString(f.Contents)
+			if err != nil {
+				continue
+			}
+			results = append(results, struct {
+				Name string
+				Size int
+				Mime string
+			}{
+				Name: f.Name,
+				Size: len(content),
+				Mime: f.Mime,
+			})
+		}
+
+		sse.PatchElementTempl(FileUploadResults(results))
+	})
+}
+
+templ FileUploadPage() {
+	@Base("File Upload") {
+		<div class="container mx-auto p-8">
+			<h1 class="text-2xl font-bold mb-4">File Upload</h1>
+			<p class="mb-4 text-gray-600">
+				Upload files via base64 encoding. Max 4MB.
+			</p>
+			<div class="space-y-4">
+				<input 
+					type="file" 
+					class="file-input file-input-bordered w-full" 
+					data-bind:files 
+					multiple
+				/>
+				<button
+					class="btn btn-primary"
+					data-on:click="$files.length && @post('/file-upload')"
+					data-attr:disabled="!$files.length"
+				>
+					Upload
+				</button>
+				<div id="results"></div>
+			</div>
+		</div>
+	}
+}
+
+templ FileUploadResults(files []struct {
+	Name string
+	Size int
+	Mime string
+}) {
+	<table id="results" class="table w-full">
+		<thead>
+			<tr>
+				<th>Name</th>
+				<th>Size (bytes)</th>
+				<th>MIME Type</th>
+			</tr>
+		</thead>
+		<tbody>
+			for _, f := range files {
+				<tr>
+					<td>{ f.Name }</td>
+					<td>{ fmt.Sprint(f.Size) }</td>
+					<td>{ f.Mime }</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+}

@@ -1,0 +1,208 @@
+package pages
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/delaneyj/toolbelt/embeddednats"
+	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/sessions"
+	"github.com/nats-io/nats.go/jetstream"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+type DrawingService struct {
+	kv jetstream.KeyValue
+}
+
+func NewDrawingService(ns *embeddednats.Server) (*DrawingService, error) {
+	nc, _ := ns.Client()
+	js, _ := jetstream.New(nc)
+	kv, _ := js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
+		Bucket:      "whiteboard",
+		Description: "Collaborative whiteboard",
+		Compression: true,
+		TTL:         24 * time.Hour,
+	})
+	return &DrawingService{kv: kv}, nil
+}
+
+func (s *DrawingService) SaveDrawing(drawing *Drawing) error {
+	data, _ := json.Marshal(drawing)
+	_, err := s.kv.Put(context.Background(), drawing.ID, data)
+	return err
+}
+
+func (s *DrawingService) GetDrawings() ([]*Drawing, error) {
+	drawings := []*Drawing{}
+	keys, _ := s.kv.Keys(context.Background())
+	for _, key := range keys {
+		entry, err := s.kv.Get(context.Background(), key)
+		if err != nil {
+			continue
+		}
+		var d Drawing
+		json.Unmarshal(entry.Value(), &d)
+		drawings = append(drawings, &d)
+	}
+	return drawings, nil
+}
+
+func (s *DrawingService) Clear() error {
+	keys, _ := s.kv.Keys(context.Background())
+	for _, key := range keys {
+		s.kv.Delete(context.Background(), key)
+	}
+	return nil
+}
+
+func (s *DrawingService) Watch(ctx context.Context) (jetstream.KeyWatcher, error) {
+	return s.kv.Watch(ctx, "*")
+}
+
+type Drawing struct {
+	ID        string  `json:"id"`
+	UserID    string  `json:"userId"`
+	Color     string  `json:"color"`
+	Points    []Point `json:"points"`
+	CreatedAt int64   `json:"createdAt"`
+}
+
+type Point struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+func SetupWhiteboard(router chi.Router, ns *embeddednats.Server, store sessions.Store) {
+	service, _ := NewDrawingService(ns)
+
+	var userColors = []string{"#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7", "#DDA0DD"}
+	var colorIndex int
+	var mu sync.Mutex
+
+	getUserID := func(w http.ResponseWriter, r *http.Request) (string, string) {
+		sess, _ := store.Get(r, "whiteboard")
+		userID, _ := sess.Values["user_id"].(string)
+		color, _ := sess.Values["color"].(string)
+		if userID == "" {
+			userID = generateID()
+			mu.Lock()
+			color = userColors[colorIndex%len(userColors)]
+			colorIndex++
+			mu.Unlock()
+			sess.Values["user_id"] = userID
+			sess.Values["color"] = color
+			sess.Save(r, w)
+		}
+		return userID, color
+	}
+
+	router.Get("/whiteboard", func(w http.ResponseWriter, r *http.Request) {
+		WhiteboardPage().Render(r.Context(), w)
+	})
+
+	router.Get("/whiteboard/drawings", func(w http.ResponseWriter, r *http.Request) {
+		sse := datastar.NewSSE(w, r)
+		drawings, _ := service.GetDrawings()
+		sse.MarshalAndPatchSignals(map[string]interface{}{"drawings": drawings})
+
+		watcher, _ := service.Watch(r.Context())
+		defer watcher.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case entry := <-watcher.Updates():
+				if entry == nil {
+					continue
+				}
+				var d Drawing
+				json.Unmarshal(entry.Value(), &d)
+				sse.MarshalAndPatchSignals(map[string]interface{}{"drawing": d})
+			}
+		}
+	})
+
+	router.Post("/whiteboard/draw", func(w http.ResponseWriter, r *http.Request) {
+		userID, color := getUserID(w, r)
+		var req struct {
+			Points []Point `json:"points"`
+		}
+		datastar.ReadSignals(r, &req)
+
+		drawing := &Drawing{
+			ID:        generateID(),
+			UserID:    userID,
+			Color:     color,
+			Points:    req.Points,
+			CreatedAt: time.Now().Unix(),
+		}
+		service.SaveDrawing(drawing)
+	})
+
+	router.Delete("/whiteboard", func(w http.ResponseWriter, r *http.Request) {
+		service.Clear()
+	})
+}
+
+func generateID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+templ WhiteboardPage() {
+	@Base("Whiteboard") {
+		<div class="flex flex-col h-screen">
+			<div class="p-4 border-b flex justify-between items-center">
+				<h1 class="text-xl font-bold">Collaborative Whiteboard</h1>
+				<button 
+					class="btn btn-error btn-sm"
+					data-on:click="@delete('/whiteboard')"
+				>
+					Clear
+				</button>
+			</div>
+			<canvas 
+				id="canvas" 
+				class="flex-1 bg-white"
+				data-signals={ `{"isDrawing":false,"points":[],"drawings":[]}` }
+				data-on:mousedown={ `$isDrawing = true; $points = [];` }
+				data-on:mousemove={ `if ($isDrawing) { $points.push({x: evt.offsetX, y: evt.offsetY}); }` }
+				data-on:mouseup={ `if ($isDrawing && $points.length) { @post('/whiteboard/draw'); $points = []; } $isDrawing = false;` }
+				data-on:mouseleave={ `$isDrawing = false;` }
+			></canvas>
+		</div>
+		<script>
+			const canvas = document.getElementById('canvas');
+			const ctx = canvas.getContext('2d');
+			
+			function resize() {
+				canvas.width = canvas.offsetWidth;
+				canvas.height = canvas.offsetHeight;
+				redraw();
+			}
+			
+			function redraw() {
+				ctx.clearRect(0, 0, canvas.width, canvas.height);
+				const drawings = $drawings || [];
+				drawings.forEach(d => {
+					if (d.points && d.points.length > 1) {
+						ctx.beginPath();
+						ctx.strokeStyle = d.color;
+						ctx.lineWidth = 2;
+						ctx.moveTo(d.points[0].x, d.points[0].y);
+						d.points.forEach(p => ctx.lineTo(p.x, p.y));
+						ctx.stroke();
+					}
+				});
+			}
+			
+			window.addEventListener('resize', resize);
+			setTimeout(resize, 100);
+		</script>
+	}
+}
