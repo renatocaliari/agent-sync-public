@@ -1,0 +1,90 @@
+package pages
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+func SetupInfiniteScroll(router chi.Router) {
+	router.Get("/infinite-scroll", func(w http.ResponseWriter, r *http.Request) {
+		InfiniteScrollPage(0).Render(r.Context(), w)
+	})
+
+	router.Get("/infinite-scroll/more", func(w http.ResponseWriter, r *http.Request) {
+		type signals struct {
+			Offset int `json:"offset"`
+		}
+		s := &signals{}
+		if err := datastar.ReadSignals(r, s); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		newOffset := s.Offset + 10
+
+		sse := datastar.NewSSE(w, r)
+		if newOffset < 50 {
+			sse.MarshalAndPatchSignals(&signals{Offset: newOffset})
+			sse.PatchElementTempl(
+				InfiniteScrollRows(newOffset),
+				datastar.WithModeAppend(),
+				datastar.WithSelectorID("rows"),
+			)
+		} else {
+			sse.PatchElementTempl(InfiniteScrollEnd())
+		}
+	})
+}
+
+templ InfiniteScrollPage(offset int) {
+	@Base("Infinite Scroll") {
+		<div class="container mx-auto p-8">
+			<h1 class="text-2xl font-bold mb-4">Infinite Scroll</h1>
+			<p class="mb-4 text-gray-600">
+				Loads more content when you scroll to the bottom using <code>data-on-intersect</code>.
+			</p>
+			<div id="demo" data-signals={ fmt.Sprintf(`{"offset":%d}`, offset) }>
+				<table class="table w-full">
+					<thead>
+						<tr>
+							<th>ID</th>
+							<th>Name</th>
+							<th>Email</th>
+						</tr>
+					</thead>
+					<tbody id="rows">
+						@InfiniteScrollRows(0)
+					</tbody>
+				</table>
+				<div 
+					id="loader"
+					class="text-center p-4"
+					data-on-intersect="@get('/infinite-scroll/more')"
+				>
+					<span class="loading loading-spinner loading-md"></span>
+					Loading more...
+				</div>
+			</div>
+		</div>
+	}
+}
+
+templ InfiniteScrollRows(offset int) {
+	for i := offset; i < offset+10; i++ {
+		<tr>
+			<td>{ fmt.Sprint(i + 1) }</td>
+			<td>Agent Smith { i + 1 }</td>
+			<td>agent{ i + 1 }@matrix.io</td>
+		</tr>
+	}
+}
+
+templ InfiniteScrollEnd() {
+	<div id="loader" class="text-center p-4 text-gray-500">
+		No more items to load.
+	</div>
+}

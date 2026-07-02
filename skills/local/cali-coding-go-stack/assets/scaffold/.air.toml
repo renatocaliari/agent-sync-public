@@ -1,0 +1,20 @@
+# .air.toml
+
+[build]
+  pre_cmd        = ["go tool templ generate && (which datastar-lint >/dev/null 2>&1 && datastar-lint -r ./web/ || true)"]
+  cmd            = "go build -tags=dev -o ./tmp/app ./cmd/web"
+  bin            = "./tmp/app"
+  include_ext    = ["go", "templ", "yaml", "css", "js"]
+  exclude_dir    = ["tmp", "vendor", "node_modules", "testdata"]
+  exclude_regex  = ["_templ\\.go$"]
+  kill_delay     = "500ms"
+  send_interrupt = true
+  poll           = true          # fsevents perde eventos com save atômico; polling é robusto
+  poll_interval  = 500
+  stop_on_error  = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

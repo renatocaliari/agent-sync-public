@@ -1,0 +1,96 @@
+package pages
+
+import (
+	"northstar/features/common/components"
+	"northstar/features/common/layouts"
+)
+
+templ LandingPage() {
+	@layouts.Base("Treinamento de Voz") {
+		<div class="flex flex-col min-h-screen">
+			@components.Navigation(components.PageVoiceTraining)
+			<div class="hero flex-1">
+				<div class="hero-content text-center">
+				<div class="max-w-lg">
+					<div class="avatar avatar-placeholder mb-8">
+						<div class="w-24 rounded-full bg-primary/10">
+							<svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+								<path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+								<line x1="12" x2="12" y1="19" y2="22"/>
+							</svg>
+						</div>
+					</div>
+					
+					<h1 class="text-4xl font-bold mb-4">Treinamento de Voz</h1>
+					<p class="text-lg text-base-content/70 mb-8 max-w-md mx-auto">
+						Pratique conversas com clientes simulados por IA. Speech-to-speech em tempo real.
+					</p>
+
+					<button id="start-btn" class="btn btn-primary btn-lg">
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<polygon points="5 3 19 12 5 21 5 3"/>
+						</svg>
+						Iniciar Sessão
+					</button>
+
+					<div id="loading" class="hidden mt-8">
+						<span class="loading loading-spinner loading-lg"></span>
+						<p class="text-sm text-base-content/60 mt-4">Preparando sessão...</p>
+					</div>
+
+					<div class="mt-12 grid grid-cols-3 gap-4 text-center">
+						<div class="card bg-base-200">
+							<div class="card-body items-center">
+								<div class="text-3xl mb-2">🎯</div>
+								<h3 class="card-title text-sm">Realista</h3>
+								<p class="text-xs text-base-content/60">Conversas naturais</p>
+							</div>
+						</div>
+						<div class="card bg-base-200">
+							<div class="card-body items-center">
+								<div class="text-3xl mb-2">⚡</div>
+								<h3 class="card-title text-sm">Tempo Real</h3>
+								<p class="text-xs text-base-content/60">Voz para voz</p>
+							</div>
+						</div>
+						<div class="card bg-base-200">
+							<div class="card-body items-center">
+								<div class="text-3xl mb-2">🔒</div>
+								<h3 class="card-title text-sm">Seguro</h3>
+								<p class="text-xs text-base-content/60">Sem clientes reais</p>
+							</div>
+						</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<script>
+			document.getElementById('start-btn').addEventListener('click', async () => {
+				const btn = document.getElementById('start-btn');
+				const loading = document.getElementById('loading');
+				
+				btn.classList.add('hidden');
+				loading.classList.remove('hidden');
+
+				try {
+					const response = await fetch('/voice-training/create', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({}),
+					});
+
+					const data = await response.json();
+					window.location.href = '/voice-training/' + data.roomName;
+				} catch (error) {
+					console.error('Error:', error);
+					btn.classList.remove('hidden');
+					loading.classList.add('hidden');
+					alert('Erro ao criar sessão. Tente novamente.');
+				}
+			});
+		</script>
+	}
+}

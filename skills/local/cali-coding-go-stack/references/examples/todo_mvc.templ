@@ -1,0 +1,160 @@
+package pages
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/sessions"
+	"github.com/samber/lo"
+	"github.com/starfederation/datastar-go/datastar"
+)
+
+type Todo struct {
+	Text      string `json:"text"`
+	Completed bool   `json:"completed"`
+}
+
+type TodoMVC struct {
+	Todos      []*Todo `json:"todos"`
+	EditingIdx int     `json:"editingIdx"`
+}
+
+func SetupTodoMVC(router chi.Router, store sessions.Store) {
+	sessionKey := "todomvc"
+
+	getSession := func(w http.ResponseWriter, r *http.Request) (*TodoMVC, error) {
+		sess, err := store.Get(r, sessionKey)
+		if err != nil {
+			return nil, err
+		}
+
+		mvc, ok := sess.Values["mvc"].(*TodoMVC)
+		if !ok {
+			mvc = &TodoMVC{
+				Todos: []*Todo{
+					{Text: "Learn Go", Completed: true},
+					{Text: "Learn Datastar", Completed: false},
+					{Text: "Build something", Completed: false},
+				},
+				EditingIdx: -1,
+			}
+			sess.Values["mvc"] = mvc
+			sess.Save(r, w)
+		}
+		return mvc, nil
+	}
+
+	saveSession := func(w http.ResponseWriter, r *http.Request, mvc *TodoMVC) error {
+		sess, _ := store.Get(r, sessionKey)
+		sess.Values["mvc"] = mvc
+		return sess.Save(r, w)
+	}
+
+	router.Get("/todos", func(w http.ResponseWriter, r *http.Request) {
+		mvc, _ := getSession(w, r)
+		TodoMVCPage(mvc).Render(r.Context(), w)
+	})
+
+	router.Put("/todos/reset", func(w http.ResponseWriter, r *http.Request) {
+		mvc := &TodoMVC{
+			Todos: []*Todo{
+				{Text: "Learn Go", Completed: true},
+				{Text: "Learn Datastar", Completed: false},
+				{Text: "Build something", Completed: false},
+			},
+			EditingIdx: -1,
+		}
+		saveSession(w, r, mvc)
+	})
+
+	router.Post("/todos/{idx}/toggle", func(w http.ResponseWriter, r *http.Request) {
+		mvc, _ := getSession(w, r)
+		idx := chi.URLParam(r, "idx")
+		if idx == "-1" {
+			allDone := lo.EveryBy(mvc.Todos, func(t *Todo) bool { return t.Completed })
+			for _, t := range mvc.Todos {
+				t.Completed = !allDone
+			}
+		} else {
+			i, _ := strconv.Atoi(idx)
+			if i >= 0 && i < len(mvc.Todos) {
+				mvc.Todos[i].Completed = !mvc.Todos[i].Completed
+			}
+		}
+		saveSession(w, r, mvc)
+	})
+
+	router.Delete("/todos/{idx}", func(w http.ResponseWriter, r *http.Request) {
+		mvc, _ := getSession(w, r)
+		idx := chi.URLParam(r, "idx")
+		if idx == "-1" {
+			mvc.Todos = lo.Filter(mvc.Todos, func(t *Todo, _ int) bool { return !t.Completed })
+		} else {
+			i, _ := strconv.Atoi(idx)
+			if i >= 0 && i < len(mvc.Todos) {
+				mvc.Todos = append(mvc.Todos[:i], mvc.Todos[i+1:]...)
+			}
+		}
+		saveSession(w, r, mvc)
+	})
+}
+
+templ TodoMVCPage(mvc *TodoMVC) {
+	@Base("Todos") {
+		<div class="container mx-auto p-8 max-w-2xl">
+			<h1 class="text-4xl font-bold text-center mb-8">todos</h1>
+			<div class="border rounded-lg shadow-lg">
+				<input
+					class="input input-bordered w-full text-lg p-4"
+					placeholder="What needs to be done?"
+					data-bind:input
+					data-on:keydown={ `if (evt.key === 'Enter' && $input.trim()) { @post('/todos/add'); $input = ''; }` }
+				/>
+				<ul class="divide-y">
+					for i, todo := range mvc.Todos {
+						@todoRow(todo, i)
+					}
+				</ul>
+				if len(mvc.Todos) > 0 {
+					@todoFooter(mvc)
+				}
+			</div>
+		</div>
+	}
+}
+
+templ todoRow(todo *Todo, i int) {
+	<li class="flex items-center gap-4 p-4 hover:bg-base-200">
+		<input 
+			type="checkbox" 
+			class="checkbox"
+			checked={ todo.Completed }
+			data-on:change={ `@post('/todos/` + string(rune('0'+i%10)) + `/toggle')` }
+		/>
+		<span class={ "flex-1", templ.KV("line-through text-gray-400", todo.Completed) }>
+			{ todo.Text }
+		</span>
+		<button 
+			class="btn btn-ghost btn-sm btn-circle"
+			data-on:click={ `@delete('/todos/` + string(rune('0'+i%10)) + `')` }
+		>
+			✕
+		</button>
+	</li>
+}
+
+templ todoFooter(mvc *TodoMVC) {
+	<footer class="flex justify-between items-center p-4 text-sm text-gray-500">
+		<span>
+			{ fmt.Sprint(len(lo.Filter(mvc.Todos, func(t *Todo, _ int) bool { return !t.Completed }))) } items left
+		</span>
+		<button 
+			class="btn btn-ghost btn-sm"
+			data-on:click="@put('/todos/reset')"
+		>
+			Reset
+		</button>
+	</footer>
+}

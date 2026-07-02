@@ -1,0 +1,215 @@
+package pages
+
+import (
+	"northstar/features/common/components"
+	"northstar/features/common/layouts"
+	"northstar/features/voice-training/services"
+	"fmt"
+)
+
+templ RoomPage(session *services.Session, token, livekitURL string) {
+	@layouts.Base("Treinamento de Voz") {
+		<div class="flex flex-col h-screen" 
+			 data-init={ fmt.Sprintf("@get('/voice-training/%s/transcripts')", session.RoomName) }>
+			@components.Navigation(components.PageVoiceTraining)
+
+			<div class="px-4 py-3 border-b bg-base-100">
+				<div class="breadcrumbs text-sm m-0 p-0">
+					<ul>
+						<li>
+							<a href="/" class="flex items-center gap-1">
+								<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+								Home
+							</a>
+						</li>
+						<li class="text-primary font-medium">{ session.ClientName }</li>
+					</ul>
+				</div>
+			</div>
+
+			<div id="room-data" class="hidden" data-token={ token } data-livekit-url={ livekitURL } data-room-name={ session.RoomName } data-client-name={ session.ClientName }></div>
+
+			<main class="flex-1 overflow-hidden flex flex-col">
+				<div class="flex-1 overflow-y-auto p-4 relative" id="chat-container">
+					<div class="max-w-3xl mx-auto space-y-4" id="chat-messages">
+						<div class="text-center py-8" id="loading-state">
+							<span class="loading loading-spinner loading-lg"></span>
+							<p class="text-sm text-base-content/60 mt-4 mb-4">Conectando à sessão...</p>
+						</div>
+					</div>
+				</div>
+
+				<div class="border-t bg-base-200 p-4 flex-shrink-0">
+					<div class="max-w-3xl mx-auto flex items-center gap-4">
+						<div class="badge badge-lg gap-2">
+							<span class="w-2 h-2 rounded-full bg-warning" id="status-dot"></span>
+							<span id="status-text">Conectando</span>
+						</div>
+						<div class="flex-1"></div>
+						<button id="mute-btn" class="btn btn-sm btn-square btn-ghost text-error" disabled title="Ativar microfone">
+							<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<line x1="1" x2="23" y1="1" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/>
+							</svg>
+						</button>
+						<a href="/" class="btn btn-sm btn-ghost">Encerrar</a>
+					</div>
+				</div>
+			</main>
+		</div>
+
+		<style>
+			.streaming {
+				opacity: 0.9;
+				animation: pulse 1.5s infinite;
+			}
+			.streaming .message-text::after {
+				content: ' ▌';
+				animation: blink 0.7s infinite;
+			}
+			@keyframes pulse {
+				0%, 100% { opacity: 0.9; }
+				50% { opacity: 1; }
+			}
+			@keyframes blink {
+				0%, 50% { opacity: 1; }
+				51%, 100% { opacity: 0; }
+			}
+		</style>
+
+		<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+		<script>
+			(function() {
+				console.log('[DEBUG] Room Page initialized');
+				
+				// 1. Robust Storage Polyfill for restricted environments
+				try {
+					localStorage.getItem('test');
+					console.log('[DEBUG] localStorage is accessible.');
+				} catch (e) {
+					console.warn('[DEBUG] Storage blocked. Implementing memory fallback.');
+					const createMockStorage = () => {
+						let storage = {};
+						return {
+							getItem: (key) => storage[key] || null,
+							setItem: (key, val) => { storage[key] = val.toString(); },
+							removeItem: (key) => { delete storage[key]; },
+							clear: () => { storage = {}; },
+							key: (i) => Object.keys(storage)[i] || null,
+							get length() { return Object.keys(storage).length; }
+						};
+					};
+					const mock = createMockStorage();
+					try {
+						Object.defineProperty(window, 'localStorage', { value: mock, writable: true });
+						Object.defineProperty(window, 'sessionStorage', { value: mock, writable: true });
+					} catch (e2) {
+						console.error('[DEBUG] Failed to define mock storage:', e2);
+						// Last resort: just patch the methods on the existing object if possible
+						try {
+							window.localStorage.getItem = mock.getItem;
+							window.localStorage.setItem = mock.setItem;
+						} catch (e3) {}
+					}
+				}
+
+				const data = document.getElementById('room-data').dataset;
+				const token = data.token;
+				const livekitUrl = data.livekitUrl;
+				const roomName = data.roomName;
+
+				let room = null;
+				let isMuted = true;
+
+				const statusDot = document.getElementById('status-dot');
+				const statusText = document.getElementById('status-text');
+				const muteBtn = document.getElementById('mute-btn');
+				const loadingState = document.getElementById('loading-state');
+
+				function updateStatus(connected, text) {
+					console.log('[DEBUG] UI Status Update:', connected, text);
+					statusDot.className = 'w-2 h-2 rounded-full ' + (connected ? 'bg-success' : 'bg-warning');
+					statusText.textContent = text || (connected ? 'Conectado' : 'Conectando');
+					muteBtn.disabled = !connected;
+					if (connected && loadingState) loadingState.remove();
+				}
+
+				async function connect() {
+					console.log('[DEBUG] Starting connection to LiveKit:', livekitUrl);
+					try {
+						room = new LivekitClient.Room({
+							adaptiveStream: true,
+							dynacast: true,
+							audioCaptureDefaults: {
+								autoGainControl: true,
+								deviceId: "default"
+							}
+						});
+						console.log('[DEBUG] LiveKit Room initialized.');
+
+						room.on(LivekitClient.RoomEvent.Disconnected, () => {
+							console.warn('[DEBUG] Disconnected from room');
+							updateStatus(false, 'Desconectado');
+						});
+
+						room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+							console.log('[DEBUG] Track Subscribed:', track.kind, 'from', participant.identity);
+							if (track.kind === 'audio') {
+								const element = track.attach();
+								document.body.appendChild(element);
+							}
+						});
+
+						console.log('[DEBUG] Calling room.connect...');
+						await room.connect(livekitUrl, token);
+						console.log('[DEBUG] Room connection successful');
+						
+						updateStatus(true);
+						
+						console.log('[DEBUG] Requesting bot join...');
+						const botResp = await fetch(`/voice-training/${roomName}/join-bot`, { method: 'POST' });
+						console.log('[DEBUG] Bot join request status:', botResp.status);
+
+					} catch (error) {
+						console.error('[DEBUG] Connection Error:', error);
+						updateStatus(false, 'Erro: ' + error.message);
+					}
+				}
+
+				muteBtn.addEventListener('click', async () => {
+					if (!room) {
+						console.warn('[DEBUG] Cannot toggle mic: room not connected.');
+						return;
+					}
+					
+					console.log('[DEBUG] Mute Button Clicked. Current isMuted:', isMuted);
+					try {
+						// This click provides the User Gesture required by Chrome
+						await room.localParticipant.setMicrophoneEnabled(isMuted);
+						isMuted = !isMuted;
+						console.log('[DEBUG] Mic Toggle Success. New isMuted:', isMuted);
+						
+						const icon = muteBtn.querySelector('svg');
+						if (isMuted) {
+							muteBtn.classList.add('text-error');
+							muteBtn.title = "Ativar microfone";
+							icon.innerHTML = '<line x1="1" x2="23" y1="1" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/>';
+						} else {
+							muteBtn.classList.remove('text-error');
+							muteBtn.title = "Mutar microfone";
+							icon.innerHTML = '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>';
+						}
+					} catch(e) {
+						console.error("[DEBUG] Microphone Activation Failed:", e);
+						alert("Erro ao acessar o microfone. Verifique as permissões de áudio.");
+					}
+				});
+
+				window.addEventListener('beforeunload', () => {
+					if (room) room.disconnect();
+				});
+
+				connect();
+			})();
+		</script>
+	}
+}
